@@ -1,7 +1,8 @@
 import streamlit as st
 # 首先设置页面配置 - 必须是第一个 Streamlit 命令
 st.set_page_config(
-    page_title="WenDataStudio", 
+    page_title="雯雯的数据工作室", 
+    page_icon="🌸",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -14,6 +15,7 @@ import matplotlib.pyplot as plt  # matplotlib 绘图模块
 import seaborn as sns  # 统计数据可视化模块
 import platform
 import numpy as np
+import io  # 添加io模块导入
 from src.data_processing.loader import load_data
 from src.data_processing.cleaner import clean_data
 from src.data_processing.transformer import transform_data
@@ -49,7 +51,7 @@ def set_chinese_font():
 # 初始化时设置字体
 set_chinese_font()
 
-st.title("WenDataStudio")
+st.title("Wen DataStudio")
 st.subheader("表格数据处理与可视化工具")
 
 # 侧边栏配置
@@ -59,11 +61,25 @@ upload_option = st.sidebar.radio(
     ["上传文件", "使用示例数据"]
 )
 
+# 自定义上传按钮样式，使其更适合中文环境
+st.markdown("""
+<style>
+.uploadedFile {
+    font-family: 'Noto Sans SC', sans-serif;
+}
+.stButton>button {
+    font-family: 'Noto Sans SC', sans-serif;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # 数据加载部分
 df = None
 
 if upload_option == "上传文件":
-    uploaded_file = st.sidebar.file_uploader("上传Excel或CSV文件", type=["xlsx", "csv"])
+    st.sidebar.markdown("#### 文件上传说明")
+    st.sidebar.info("请点击下方'浏览文件'按钮选择Excel(.xlsx)或CSV(.csv)格式的数据文件")
+    uploaded_file = st.sidebar.file_uploader("选择文件上传", type=["xlsx", "csv"], help="支持Excel和CSV格式，请确保文件编码为UTF-8")
     if uploaded_file is not None:
         file_extension = get_file_extension(uploaded_file.name)
         try:
