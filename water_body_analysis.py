@@ -45,7 +45,7 @@ def analyze_water_body_data(df):
             # 尝试识别可能的替代列
             if col.lower() == 'type':
                 # 查找可能包含类型信息的列
-                possible_type_cols = [c for c in df.columns if 'type' in c.lower() or 'nature' in c.lower() or 'kind' in c.lower() or 'class' in c.lower()]
+                possible_type_cols = [c for c in df.columns if isinstance(c, str) and ('type' in c.lower() or 'nature' in c.lower() or 'kind' in c.lower() or 'class' in c.lower())]
                 if possible_type_cols:
                     print(f"使用列 '{possible_type_cols[0]}' 作为 'Type' 列的替代")
                     df['Type'] = df[possible_type_cols[0]]
@@ -56,7 +56,7 @@ def analyze_water_body_data(df):
             
             elif col.lower() == 'country':
                 # 查找可能包含国家信息的列
-                possible_country_cols = [c for c in df.columns if 'country' in c.lower() or 'nation' in c.lower() or 'region' in c.lower() or 'area' in c.lower() or 'location' in c.lower()]
+                possible_country_cols = [c for c in df.columns if isinstance(c, str) and ('country' in c.lower() or 'nation' in c.lower() or 'region' in c.lower() or 'area' in c.lower() or 'location' in c.lower())]
                 if possible_country_cols:
                     print(f"使用列 '{possible_country_cols[0]}' 作为 'country' 列的替代")
                     df['country'] = df[possible_country_cols[0]]
