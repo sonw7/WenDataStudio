@@ -16,12 +16,14 @@ import seaborn as sns  # 统计数据可视化模块
 import platform
 import numpy as np
 import io  # 添加io模块导入
+import zipfile  # 用于创建ZIP文件
 from src.data_processing.loader import load_data
 from src.data_processing.cleaner import clean_data
 from src.data_processing.transformer import transform_data
 from src.visualization.charts import generate_chart
 from src.utils.helpers import get_file_extension
 from water_body_analysis import analyze_water_body_data, generate_charts, save_results_to_excel
+from src.visualization.water_body_charts import generate_water_body_analysis_chart, prepare_data_from_analysis_results, create_sample_data
 
 # 添加CSS以改进中文显示
 st.markdown("""
@@ -351,7 +353,7 @@ elif app_mode == "水体数据分析":
                     st.subheader("分析结果")
                     
                     # 创建选项卡
-                    tabs = st.tabs(["国家统计", "类型统计", "年份统计", "图表展示", "下载结果"])
+                    tabs = st.tabs(["国家统计", "类型统计", "年份统计", "图表展示", "水体分析图表", "下载结果"])
                     
                     # 国家统计选项卡
                     with tabs[0]:
@@ -400,8 +402,37 @@ elif app_mode == "水体数据分析":
                         st.write("#### 各年份水体总面积变化")
                         st.image(os.path.join(temp_dir, "各年份水体总面积变化.png"))
                     
-                    # 下载结果选项卡
+                    # 水体分析图表选项卡
                     with tabs[4]:
+                        st.write("#### 水体分析综合图表")
+                        st.write("这个图表展示了水体数据的综合分析，包括面积变化趋势、数量变化、大小分布和气候因素。")
+                        
+                        # 准备数据
+                        chart_data = prepare_data_from_analysis_results(results)
+                        
+                        # 生成图表
+                        water_body_chart_path = os.path.join(temp_dir, "water_body_analysis_chart.png")
+                        generate_water_body_analysis_chart(chart_data, water_body_chart_path)
+                        
+                        # 显示图表
+                        st.image(water_body_chart_path)
+                        
+                        # 添加图表说明
+                        with st.expander("图表说明"):
+                            st.markdown("""
+                            #### 图表解释
+                            
+                            **子图 (a)**: 展示了咸海面积随时间的变化趋势，包括斜率信息。
+                            
+                            **子图 (b)**: 展示了除咸海外的水体面积和数量随时间的变化趋势，左侧Y轴表示面积，右侧Y轴表示数量。
+                            
+                            **子图 (c)**: 展示了不同大小水体的面积和数量变化率，浅蓝色柱状图表示数量变化率，深蓝色柱状图表示面积变化率。
+                            
+                            **子图 (d)**: 展示了温度和降水随时间的变化趋势，橙色线表示温度，蓝色柱状图表示降水。
+                            """)
+                    
+                    # 下载结果选项卡
+                    with tabs[5]:
                         st.write("#### 下载分析结果")
                         
                         # 提供Excel下载
@@ -416,8 +447,6 @@ elif app_mode == "水体数据分析":
                         )
                         
                         # 提供图表打包下载
-                        import zipfile
-                        
                         # 创建一个ZIP文件
                         zip_path = os.path.join(temp_dir, "water_body_charts.zip")
                         with zipfile.ZipFile(zip_path, 'w') as zipf:
@@ -496,7 +525,7 @@ elif app_mode == "水体数据分析":
                         st.subheader("分析结果")
                         
                         # 创建选项卡
-                        tabs = st.tabs(["国家统计", "类型统计", "年份统计", "图表展示", "下载结果"])
+                        tabs = st.tabs(["国家统计", "类型统计", "年份统计", "图表展示", "水体分析图表", "下载结果"])
                         
                         # 国家统计选项卡
                         with tabs[0]:
@@ -544,9 +573,38 @@ elif app_mode == "水体数据分析":
                             
                             st.write("#### 各年份水体总面积变化")
                             st.image(os.path.join(temp_dir, "各年份水体总面积变化.png"))
-                        
-                        # 下载结果选项卡
+                    
+                        # 水体分析图表选项卡
                         with tabs[4]:
+                            st.write("#### 水体分析综合图表")
+                            st.write("这个图表展示了水体数据的综合分析，包括面积变化趋势、数量变化、大小分布和气候因素。")
+                        
+                            # 准备数据
+                            chart_data = prepare_data_from_analysis_results(results)
+                            
+                            # 生成图表
+                            water_body_chart_path = os.path.join(temp_dir, "water_body_analysis_chart.png")
+                            generate_water_body_analysis_chart(chart_data, water_body_chart_path)
+                            
+                            # 显示图表
+                            st.image(water_body_chart_path)
+                            
+                            # 添加图表说明
+                            with st.expander("图表说明"):
+                                st.markdown("""
+                                #### 图表解释
+                                
+                                **子图 (a)**: 展示了咸海面积随时间的变化趋势，包括斜率信息。
+                                
+                                **子图 (b)**: 展示了除咸海外的水体面积和数量随时间的变化趋势，左侧Y轴表示面积，右侧Y轴表示数量。
+                                
+                                **子图 (c)**: 展示了不同大小水体的面积和数量变化率，浅蓝色柱状图表示数量变化率，深蓝色柱状图表示面积变化率。
+                                
+                                **子图 (d)**: 展示了温度和降水随时间的变化趋势，橙色线表示温度，蓝色柱状图表示降水。
+                                """)
+                    
+                        # 下载结果选项卡
+                        with tabs[5]:
                             st.write("#### 下载分析结果")
                             
                             # 提供Excel下载
@@ -561,8 +619,6 @@ elif app_mode == "水体数据分析":
                             )
                             
                             # 提供图表打包下载
-                            import zipfile
-                            
                             # 创建一个ZIP文件
                             zip_path = os.path.join(temp_dir, "water_body_charts.zip")
                             with zipfile.ZipFile(zip_path, 'w') as zipf:
@@ -580,7 +636,6 @@ elif app_mode == "水体数据分析":
                                 file_name="water_body_charts.zip",
                                 mime="application/zip"
                             )
-                            
                     except Exception as e:
                         st.error(f"分析过程中出错: {str(e)}")
                         # 重置进度条
