@@ -7,7 +7,10 @@ from matplotlib.font_manager import FontProperties
 import platform
 import seaborn as sns
 from matplotlib.gridspec import GridSpec
-
+import io
+import streamlit as st
+import tempfile
+temp_dir = tempfile.mkdtemp()
 # 设置中文字体支持
 def set_chinese_font():
     system = platform.system()
@@ -307,6 +310,331 @@ def prepare_data_from_analysis_results(results):
     data['climate_data'] = climate_data
     
     return data
+
+def get_country_list(df):
+    """
+    获取数据中的国家列表
+    
+    参数:
+        df: 包含水体数据的DataFrame
+        
+    返回:
+        国家名称列表
+    """
+    if 'country' in df.columns:
+        countries = df['country'].unique().tolist()
+        # 确保所有国家名称都是字符串类型，避免排序时出现类型错误
+        countries = [str(country) for country in countries]
+        return sorted(countries)
+    return []
+
+def prepare_natural_artificial_data(df):
+    """
+    处理并准备自然/非自然水体数据
+    
+    参数:
+        df: 包含水体数据的DataFrame
+        
+    返回:
+        处理后的DataFrame，确保包含is_natural列
+    """
+    # 复制DataFrame避免修改原始数据
+    processed_df = df.copy()
+    
+    # 检查是否已存在is_natural列
+    if 'is_natural' not in processed_df.columns:
+        # 尝试从其他可能的列中推断自然/非自然状态
+        if 'Type' in processed_df.columns:
+            # 定义可能表示自然水体的关键词
+            natural_keywords = ['natural', '自然', 'lake', '湖泊', 'river', '河流', 'wetland', '湿地', 'ocean', '海洋']
+            # 定义可能表示人工水体的关键词
+            artificial_keywords = ['artificial', '人工', 'reservoir', '水库', 'dam', '水坝', 'canal', '运河', 'pond', '池塘']
+            
+            # 创建is_natural列
+            def determine_if_natural(water_type):
+                if pd.isna(water_type) or water_type == '':
+                    return None
+                
+                water_type = str(water_type).lower()
+                
+                # 检查是否匹配自然水体关键词
+                if any(keyword in water_type for keyword in natural_keywords):
+                    return True
+                
+                # 检查是否匹配人工水体关键词
+                if any(keyword in water_type for keyword in artificial_keywords):
+                    return False
+                
+                # 默认为未知
+                return None
+            
+            # 应用函数创建is_natural列
+            processed_df['is_natural'] = processed_df['Type'].apply(determine_if_natural)
+            
+            # 打印统计信息
+            natural_count = processed_df['is_natural'].sum()
+            artificial_count = (processed_df['is_natural'] == False).sum()
+            print(f"自动识别: 自然水体 {natural_count}, 非自然水体 {artificial_count}, 未知 {len(processed_df) - natural_count - artificial_count}")
+    
+    return processed_df
+
+def generate_country_water_body_stats(df, country_name, year_cols, types_to_analyze=None):
+    """
+    生成特定国家随时间变化的水体统计和可视化
+    
+    参数：
+        df: 包含水体数据的DataFrame
+        country_name: 要分析的国家名称
+        year_cols: 年份列列表
+        types_to_analyze: 要分析的水体类型列表（默认：使用数据中的所有类型）
+        
+    返回：
+        tuple: (包含统计数据的DataFrame, BytesIO图像缓冲区或可视化失败时为None)
+    """
+    # 检查数据中是否存在该国家
+    if country_name not in df['country'].unique():
+        print(f"未找到国家：{country_name}的数据")
+        return pd.DataFrame(), None
+    
+    # 筛选指定国家的数据
+    country_df = df[df['country'] == country_name]
+    
+    # 获取要分析的水体类型（如果未指定则使用所有类型）
+    if types_to_analyze is None:
+        types_to_analyze = country_df['Type'].unique() if 'Type' in country_df.columns else []
+    
+    # 将年份列转换为字符串，以确保一致性
+    year_cols = [str(col) for col in year_cols]
+    
+    # 初始化结果DataFrame
+    result_df = pd.DataFrame(index=year_cols)
+    
+    # 确保年份列在dataframe中为数值类型
+    for year in year_cols:
+        if year in country_df.columns:
+            # 尝试将年份列转换为数值类型，非数值替换为NaN
+            country_df[year] = pd.to_numeric(country_df[year], errors='coerce')
+    
+    # 计算每种水体类型和年份的统计数据
+    if 'Type' in country_df.columns:
+        for water_type in types_to_analyze:
+            type_df = country_df[country_df['Type'] == water_type]
+            
+            for year in year_cols:
+                if year in type_df.columns:
+                    result_df.loc[year, f'{water_type}_数量'] = type_df[year].count()
+                    result_df.loc[year, f'{water_type}_面积'] = type_df[year].sum()
+    
+    # 添加总计列
+    for year in year_cols:
+        if year in country_df.columns:
+            result_df.loc[year, '总数量'] = country_df[year].count()
+            result_df.loc[year, '总面积'] = country_df[year].sum()
+    
+    # 计算自然/非自然水体统计 (假设有一个名为"is_natural"的列，值为True/False或1/0)
+    if 'is_natural' in country_df.columns:
+        natural_df = country_df[country_df['is_natural'] == True]
+        artificial_df = country_df[country_df['is_natural'] == False]
+        
+        for year in year_cols:
+            if year in country_df.columns:
+                # 自然水体统计
+                result_df.loc[year, '自然水体_数量'] = natural_df[year].count() if not natural_df.empty else 0
+                result_df.loc[year, '自然水体_面积'] = natural_df[year].sum() if not natural_df.empty else 0
+                
+                # 非自然水体统计
+                result_df.loc[year, '非自然水体_数量'] = artificial_df[year].count() if not artificial_df.empty else 0
+                result_df.loc[year, '非自然水体_面积'] = artificial_df[year].sum() if not artificial_df.empty else 0
+    
+    # 创建可视化
+    try:
+        # 确保结果DataFrame中的所有值都是数值类型
+        result_df = result_df.apply(pd.to_numeric, errors='coerce')
+        
+        fig = plt.figure(figsize=(14, 14))
+        gs = GridSpec(4, 1, figure=fig, height_ratios=[1, 1, 1, 1])
+        
+        # 1. 面积变化图 - 按类型
+        ax1 = fig.add_subplot(gs[0])
+        area_columns = [col for col in result_df.columns if '面积' in col and '自然' not in col and '非自然' not in col]
+        if area_columns:
+            result_df[area_columns].plot(ax=ax1, marker='o')
+            ax1.set_title(f'{country_name}国家水体面积随年份变化(按类型)')
+            ax1.set_xlabel('年份')
+            ax1.set_ylabel('面积')
+            ax1.grid(True, alpha=0.3)
+            ax1.legend()
+        
+        # 2. 数量变化图 - 按类型
+        ax2 = fig.add_subplot(gs[1])
+        count_columns = [col for col in result_df.columns if '数量' in col and '自然' not in col and '非自然' not in col]
+        if count_columns:
+            result_df[count_columns].plot(ax=ax2, marker='o')
+            ax2.set_title(f'{country_name}国家水体数量随年份变化(按类型)')
+            ax2.set_xlabel('年份')
+            ax2.set_ylabel('数量')
+            ax2.grid(True, alpha=0.3)
+            ax2.legend()
+        
+        # 3. 自然/非自然水体面积变化
+        ax3 = fig.add_subplot(gs[2])
+        natural_area_cols = ['自然水体_面积', '非自然水体_面积']
+        has_natural_data = all(col in result_df.columns for col in natural_area_cols)
+        
+        if has_natural_data:
+            result_df[natural_area_cols].plot(ax=ax3, marker='o', 
+                                            color=['green', 'orange'],
+                                            linewidth=2)
+            # 添加总面积线
+            if '总面积' in result_df.columns:
+                result_df['总面积'].plot(ax=ax3, marker='s', color='blue', 
+                                      linestyle='--', linewidth=1.5, label='总面积')
+            
+            ax3.set_title(f'{country_name}国家自然/非自然水体面积随年份变化')
+            ax3.set_xlabel('年份')
+            ax3.set_ylabel('面积')
+            ax3.grid(True, alpha=0.3)
+            ax3.legend()
+        
+        # 4. 自然/非自然水体数量变化
+        ax4 = fig.add_subplot(gs[3])
+        natural_count_cols = ['自然水体_数量', '非自然水体_数量']
+        
+        if has_natural_data:
+            result_df[natural_count_cols].plot(ax=ax4, marker='o', 
+                                             color=['green', 'orange'],
+                                             linewidth=2)
+            # 添加总数量线
+            if '总数量' in result_df.columns:
+                result_df['总数量'].plot(ax=ax4, marker='s', color='blue', 
+                                       linestyle='--', linewidth=1.5, label='总数量')
+            
+            ax4.set_title(f'{country_name}国家自然/非自然水体数量随年份变化')
+            ax4.set_xlabel('年份')
+            ax4.set_ylabel('数量')
+            ax4.grid(True, alpha=0.3)
+            ax4.legend()
+        
+        plt.tight_layout()
+        
+        # 保存图形到缓冲区
+        img_buf = io.BytesIO()
+        plt.savefig(img_buf, format='png', dpi=100, bbox_inches='tight')
+        plt.close(fig)
+        img_buf.seek(0)
+        
+        return result_df, img_buf
+        
+    except Exception as e:
+        print(f"生成可视化时出错：{e}")
+        import traceback
+        traceback.print_exc()  # 打印详细的错误信息
+        plt.close('all')  # 确保关闭所有图形
+        return result_df, None
+
+# Streamlit 应用的国家选择功能代码
+def country_analysis_tab(df):
+    st.write("#### 单个国家水体统计分析")
+    
+    # 预处理数据，确保包含自然/非自然水体信息
+    processed_df = prepare_natural_artificial_data(df)
+    
+    # 获取数据中的国家列表
+    country_list = get_country_list(processed_df)
+    
+    if country_list:
+        # 创建国家选择下拉框
+        selected_country = st.selectbox("选择国家", country_list)
+        
+        # 获取年份列
+        year_cols = [col for col in processed_df.columns if isinstance(col, (int, str)) and str(col).isdigit()]
+        
+        # 检查是否存在自然/非自然水体信息
+        has_natural_flag = 'is_natural' in processed_df.columns
+        
+        # 创建分析选项
+        st.write("##### 分析选项")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            show_by_type = st.checkbox("按水体类型分析", value=True)
+        
+        with col2:
+            show_natural_artificial = st.checkbox("自然/非自然水体分析", value=has_natural_flag, disabled=not has_natural_flag)
+            
+            if not has_natural_flag and show_natural_artificial:
+                st.info("数据中没有自然/非自然水体标识，无法进行相关分析")
+        
+        if selected_country and year_cols:
+            # 显示分析按钮
+            if st.button(f"分析 {selected_country} 水体数据"):
+                with st.spinner(f"正在分析 {selected_country} 的水体数据..."):
+                    # 生成该国家的水体统计数据
+                    country_stats, country_img = generate_country_water_body_stats(processed_df, selected_country, year_cols)
+                    
+                    # 显示统计结果
+                    if not country_stats.empty:
+                        st.write(f"##### {selected_country} 水体数据统计")
+                        
+                        # 根据用户选择过滤要显示的列
+                        display_columns = []
+                        
+                        if show_by_type:
+                            type_columns = [col for col in country_stats.columns 
+                                            if '自然' not in col and '非自然' not in col]
+                            display_columns.extend(type_columns)
+                        
+                        if show_natural_artificial and has_natural_flag:
+                            natural_columns = [col for col in country_stats.columns 
+                                              if '自然' in col or '非自然' in col]
+                            display_columns.extend(natural_columns)
+                        
+                        # 如果没有选择任何选项，默认显示所有列
+                        if not display_columns:
+                            display_columns = country_stats.columns.tolist()
+                        
+                        # 确保总计列始终显示
+                        if '总数量' in country_stats.columns and '总数量' not in display_columns:
+                            display_columns.append('总数量')
+                        if '总面积' in country_stats.columns and '总面积' not in display_columns:
+                            display_columns.append('总面积')
+                        
+                        # 显示过滤后的数据表
+                        filtered_stats = country_stats[display_columns]
+                        st.dataframe(filtered_stats, use_container_width=True)
+                        
+                        # 添加下载按钮
+                        country_specific_csv = country_stats.to_csv(index=True).encode('utf-8')
+                        st.download_button(
+                            label=f"下载 {selected_country} 水体统计数据",
+                            data=country_specific_csv,
+                            file_name=f"{selected_country}_water_body_statistics.csv",
+                            mime="text/csv"
+                        )
+                        
+                        # 显示可视化结果
+                        if country_img:
+                            st.write(f"##### {selected_country} 水体变化可视化")
+                            st.image(country_img)
+                            
+                            # 保存图像并提供下载
+                            country_img_path = os.path.join(temp_dir, f"{selected_country}_water_analysis.png")
+                            with open(country_img_path, "wb") as f:
+                                f.write(country_img.getvalue())
+                            
+                            with open(country_img_path, "rb") as f:
+                                img_bytes = f.read()
+                                
+                                st.download_button(
+                                    label=f"下载 {selected_country} 水体分析图",
+                                    data=img_bytes,
+                                    file_name=f"{selected_country}_water_analysis.png",
+                                    mime="image/png"
+                                )
+                    else:
+                        st.warning(f"未找到 {selected_country} 的水体数据")
+    else:
+        st.warning("数据中未找到国家信息")
 
 if __name__ == "__main__":
     # 创建示例数据

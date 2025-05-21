@@ -12,7 +12,34 @@ if 'water_body_results' not in st.session_state:
     st.session_state.water_body_results = None
 if 'water_body_temp_dir' not in st.session_state:
     st.session_state.water_body_temp_dir = None
+if 'analysis_triggered_for_current_file' not in st.session_state:
+    st.session_state.analysis_triggered_for_current_file = False
+if 'current_water_file_name' not in st.session_state:
+    st.session_state.current_water_file_name = None
 
+# Session state for per-country analysis in Tab 0
+if 'country_analysis_completed_tab0' not in st.session_state:
+    st.session_state.country_analysis_completed_tab0 = False
+if 'selected_country_tab0' not in st.session_state:
+    st.session_state.selected_country_tab0 = None
+if 'selected_country_tab0_processed' not in st.session_state: # Stores the country for which analysis was run
+    st.session_state.selected_country_tab0_processed = None
+if 'country_stats_tab0' not in st.session_state:
+    st.session_state.country_stats_tab0 = None
+if 'country_img_tab0' not in st.session_state:
+    st.session_state.country_img_tab0 = None
+
+# Session state for per-country analysis in Tab 6
+if 'country_analysis_completed_tab6' not in st.session_state:
+    st.session_state.country_analysis_completed_tab6 = False
+if 'selected_country_tab6' not in st.session_state:
+    st.session_state.selected_country_tab6 = None
+if 'selected_country_tab6_processed' not in st.session_state: # Stores the country for which analysis was run
+    st.session_state.selected_country_tab6_processed = None
+if 'country_stats_tab6' not in st.session_state:
+    st.session_state.country_stats_tab6 = None
+if 'country_img_tab6' not in st.session_state:
+    st.session_state.country_img_tab6 = None
 # 然后导入其他模块
 import pandas as pd
 import os
@@ -29,7 +56,7 @@ from src.data_processing.transformer import transform_data
 from src.visualization.charts import generate_chart
 from src.utils.helpers import get_file_extension
 from water_body_analysis import analyze_water_body_data, generate_charts, save_results_to_excel
-from src.visualization.water_body_charts import generate_water_body_analysis_chart, prepare_data_from_analysis_results, create_sample_data
+from src.visualization.water_body_charts import generate_water_body_analysis_chart, prepare_data_from_analysis_results, create_sample_data, get_country_list, generate_country_water_body_stats
 
 # 添加CSS以改进中文显示
 st.markdown("""
@@ -66,7 +93,7 @@ st.subheader("表格数据处理与可视化工具")
 # 添加导航菜单
 app_mode = st.sidebar.selectbox(
     "选择功能模式",
-    ["通用数据分析", "水体数据分析"]
+    ["水体数据分析","通用数据分析"]
 )
 
 # 侧边栏配置
@@ -101,6 +128,8 @@ if app_mode == "通用数据分析":
             file_extension = get_file_extension(uploaded_file.name)
             try:
                 df = load_data(uploaded_file, file_extension)
+                # 将所有列名转换为字符串，避免混合类型警告
+                df.columns = df.columns.astype(str)
                 st.sidebar.success(f"成功加载文件: {uploaded_file.name}")
             except Exception as e:
                 st.sidebar.error(f"文件加载失败: {str(e)}")
@@ -108,6 +137,8 @@ if app_mode == "通用数据分析":
         sample_data_path = os.path.join("data", "sample", "sales_data.xlsx")
         if os.path.exists(sample_data_path):
             df = load_data(sample_data_path, "xlsx")
+            # 将所有列名转换为字符串，避免混合类型警告
+            df.columns = df.columns.astype(str)
             st.sidebar.info("已加载示例数据")
         else:
             st.sidebar.error("示例数据文件不存在")
@@ -290,7 +321,6 @@ if app_mode == "通用数据分析":
 elif app_mode == "水体数据分析":
     st.header("水体数据分析")
     
-    # 添加说明
     st.markdown("""
     ### 功能说明
     本功能用于分析水体数据，包括自然和非自然水体的面积统计、不同年份的水体数量和面积变化等。
@@ -304,396 +334,331 @@ elif app_mode == "水体数据分析":
     > 注意：如果您的数据不完全符合上述格式，系统将尝试自动识别相关列。
     """)
     
-    # 文件上传
     uploaded_file = st.file_uploader("上传水体数据文件", type=["xlsx", "csv"], help="支持Excel和CSV格式", key="water_body_uploader")
     
+    df_water = None # Initialize df_water for this scope
+
     if uploaded_file is not None:
-        # 加载数据
+        # Check if a new file has been uploaded
+        if st.session_state.current_water_file_name != uploaded_file.name:
+            st.session_state.current_water_file_name = uploaded_file.name
+            st.session_state.water_body_results = None
+            st.session_state.water_body_temp_dir = None
+            st.session_state.analysis_triggered_for_current_file = False
+            
+            # Reset per-country analysis states
+            st.session_state.country_analysis_completed_tab0 = False
+            st.session_state.selected_country_tab0 = None
+            st.session_state.selected_country_tab0_processed = None
+            st.session_state.country_stats_tab0 = None
+            st.session_state.country_img_tab0 = None
+
+            st.session_state.country_analysis_completed_tab6 = False
+            st.session_state.selected_country_tab6 = None
+            st.session_state.selected_country_tab6_processed = None
+            st.session_state.country_stats_tab6 = None
+            st.session_state.country_img_tab6 = None
+            # Add any other session state keys specific to water analysis that need clearing
+
         file_extension = get_file_extension(uploaded_file.name)
         try:
-            df = load_data(uploaded_file, file_extension)
+            df_water = load_data(uploaded_file, file_extension)
+            df_water.columns = df_water.columns.astype(str)
             st.success(f"成功加载文件: {uploaded_file.name}")
             
-            # 显示数据预览
             st.subheader("数据预览")
-            st.dataframe(df.head(10), height=300, use_container_width=True)
+            st.dataframe(df_water.head(10), height=300, use_container_width=True)
             
-            # 检查会话状态中是否有保存的结果
-            if st.session_state.water_body_results is not None and st.button("显示上次分析结果"):
-                results = st.session_state.water_body_results
-                temp_dir = st.session_state.water_body_temp_dir
-                st.success("已加载上次分析结果")
-                
-                # 显示结果
-                st.subheader("分析结果")
-                
-                # 创建选项卡
-                tabs = st.tabs(["国家统计", "类型统计", "年份统计", "图表展示", "水体分析图表", "下载结果"])
-                
-                # 国家统计选项卡
-                with tabs[0]:
-                    st.write("#### 各国水体统计")
-                    st.dataframe(results['total']['country'], use_container_width=True)
+            if st.button("分析水体数据", key="analyze_water_data_main_btn"):
+                with st.spinner("正在进行水体数据分析..."):
+                    # Perform analysis
+                    results = analyze_water_body_data(df_water) # Use df_water
                     
-                    # 添加下载按钮
-                    country_csv = results['total']['country'].to_csv(index=True).encode('utf-8')
-                    st.download_button(
-                        label="下载各国水体统计数据",
-                        data=country_csv,
-                        file_name="country_water_body_statistics.csv",
-                        mime="text/csv"
-                    )
-                
-                # 类型统计选项卡
-                with tabs[1]:
-                    st.write("#### 自然/非自然水体数量")
-                    st.dataframe(results['by_type']['counts'], use_container_width=True)
-                    
-                    # 添加下载按钮
-                    type_counts_csv = results['by_type']['counts'].to_csv(index=True).encode('utf-8')
-                    st.download_button(
-                        label="下载自然/非自然水体数量统计",
-                        data=type_counts_csv,
-                        file_name="water_body_type_counts.csv",
-                        mime="text/csv"
-                    )
-                    
-                    st.write("#### 自然/非自然水体面积随年份变化")
-                    st.dataframe(results['by_type']['areas'], use_container_width=True)
-                    
-                    # 添加下载按钮
-                    type_areas_csv = results['by_type']['areas'].to_csv(index=True).encode('utf-8')
-                    st.download_button(
-                        label="下载自然/非自然水体面积统计",
-                        data=type_areas_csv,
-                        file_name="water_body_type_areas.csv",
-                        mime="text/csv"
-                    )
-                
-                # 年份统计选项卡
-                with tabs[2]:
-                    st.write("#### 各年份水体数量和面积")
-                    st.dataframe(results['by_year'], use_container_width=True)
-                    
-                    # 添加下载按钮
-                    by_year_csv = results['by_year'].to_csv(index=True).encode('utf-8')
-                    st.download_button(
-                        label="下载各年份水体统计数据",
-                        data=by_year_csv,
-                        file_name="yearly_water_body_statistics.csv",
-                        mime="text/csv"
-                    )
-                    
-                    st.write("#### 各年份自然/非自然水体统计")
-                    # 格式化列名以提高可读性
-                    yearly_type_stats = results['yearly_type_stats'].copy()
-                    column_mapping = {
-                        'nature_数量': '自然水体数量',
-                        'nature_面积': '自然水体面积',
-                        'non-nature_数量': '非自然水体数量',
-                        'non-nature_面积': '非自然水体面积'
-                    }
-                    yearly_type_stats.rename(columns=column_mapping, inplace=True)
-                    st.dataframe(yearly_type_stats, use_container_width=True)
-                    
-                    # 添加下载按钮
-                    yearly_type_csv = yearly_type_stats.to_csv(index=True).encode('utf-8')
-                    st.download_button(
-                        label="下载各年份自然/非自然水体统计",
-                        data=yearly_type_csv,
-                        file_name="yearly_type_water_body_statistics.csv",
-                        mime="text/csv"
-                    )
-                
-                # 图表展示选项卡
-                with tabs[3]:
-                    st.write("#### 各国水体总面积（前10名）")
-                    st.image(os.path.join(temp_dir, "各国水体总面积.png"))
-                    
-                    st.write("#### 自然/非自然水体数量对比")
-                    st.image(os.path.join(temp_dir, "自然非自然水体数量对比.png"))
-                    
-                    st.write("#### 自然/非自然水体面积随年份变化")
-                    st.image(os.path.join(temp_dir, "自然非自然水体面积年份变化.png"))
-                    
-                    st.write("#### 各年份水体数量变化")
-                    st.image(os.path.join(temp_dir, "各年份水体数量变化.png"))
-                    
-                    st.write("#### 各年份水体总面积变化")
-                    st.image(os.path.join(temp_dir, "各年份水体总面积变化.png"))
-                
-                # 水体分析图表选项卡
-                with tabs[4]:
-                    st.write("#### 水体分析综合图表")
-                    st.write("这个图表展示了水体数据的综合分析，包括面积变化趋势、数量变化、大小分布和气候因素。")
-                    
-                    # 准备数据
-                    chart_data = prepare_data_from_analysis_results(results)
-                    
-                    # 生成图表
-                    water_body_chart_path = os.path.join(temp_dir, "water_body_analysis_chart.png")
-                    generate_water_body_analysis_chart(chart_data, water_body_chart_path)
-                    
-                    # 显示图表
-                    st.image(water_body_chart_path)
-                    
-                    # 添加图表说明
-                    with st.expander("图表说明"):
-                        st.markdown("""
-                        #### 图表解释
-                        
-                        **子图 (a)**: 展示了咸海面积随时间的变化趋势，包括斜率信息。
-                        
-                        **子图 (b)**: 展示了除咸海外的水体面积和数量随时间的变化趋势，左侧Y轴表示面积，右侧Y轴表示数量。
-                        
-                        **子图 (c)**: 展示了不同大小水体的面积和数量变化率，浅蓝色柱状图表示数量变化率，深蓝色柱状图表示面积变化率。
-                        
-                        **子图 (d)**: 展示了温度和降水随时间的变化趋势，橙色线表示温度，蓝色柱状图表示降水。
-                        """)
-                
-                # 下载结果选项卡
-                with tabs[5]:
-                    st.write("#### 下载分析结果")
-                    
-                    # 提供Excel下载
-                    excel_path = os.path.join(temp_dir, "water_body_statistics.xlsx")
-                    with open(excel_path, "rb") as file:
-                        excel_bytes = file.read()
-                        
-                    st.download_button(
-                        label="下载Excel统计结果",
-                        data=excel_bytes,
-                        file_name="water_body_statistics.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    
-                    # 提供图表打包下载
-                    # 创建一个ZIP文件
-                    zip_path = os.path.join(temp_dir, "water_body_charts.zip")
-                    with zipfile.ZipFile(zip_path, 'w') as zipf:
-                        for chart_file in os.listdir(temp_dir):
-                            if chart_file.endswith('.png'):
-                                zipf.write(os.path.join(temp_dir, chart_file), chart_file)
-                    
-                    # 提供ZIP下载
-                    with open(zip_path, "rb") as file:
-                        zip_bytes = file.read()
-                        
-                    st.download_button(
-                        label="下载所有图表 (ZIP)",
-                        data=zip_bytes,
-                        file_name="water_body_charts.zip",
-                        mime="application/zip"
-                    )
-            # 分析按钮
-            elif st.button("分析水体数据"):
-                # 创建进度条
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                # 更新进度
-                status_text.text("正在分析数据...")
-                progress_bar.progress(20)
-                
-                # 分析数据
-                try:
-                    results = analyze_water_body_data(df)
-                    
-                    # 更新进度
-                    status_text.text("正在生成图表...")
-                    progress_bar.progress(50)
-                    
-                    # 创建临时目录用于存储图表
                     temp_dir = "temp_output"
                     os.makedirs(temp_dir, exist_ok=True)
                     
-                    # 生成图表
                     generate_charts(results, temp_dir)
                     
-                    # 更新进度
-                    status_text.text("正在保存结果...")
-                    progress_bar.progress(80)
-                    
-                    # 保存结果到Excel
                     excel_path = os.path.join(temp_dir, "water_body_statistics.xlsx")
                     save_results_to_excel(results, excel_path)
                     
-                    # 保存结果到会话状态
+                    # Save results to session state for the current analysis
                     st.session_state.water_body_results = results
                     st.session_state.water_body_temp_dir = temp_dir
-                    
-                    # 完成进度
-                    progress_bar.progress(100)
-                    status_text.text("分析完成!")
-                    
-                    # 显示结果
-                    st.subheader("分析结果")
-                    
-                    # 创建选项卡
-                    tabs = st.tabs(["国家统计", "类型统计", "年份统计", "图表展示", "水体分析图表", "下载结果"])
-                    
-                    # 国家统计选项卡
-                    with tabs[0]:
-                        st.write("#### 各国水体统计")
-                        st.dataframe(results['total']['country'], use_container_width=True)
-                        
-                        # 添加下载按钮
-                        country_csv = results['total']['country'].to_csv(index=True).encode('utf-8')
-                        st.download_button(
-                            label="下载各国水体统计数据",
-                            data=country_csv,
-                            file_name="country_water_body_statistics.csv",
-                            mime="text/csv"
-                        )
-                    
-                    # 类型统计选项卡
-                    with tabs[1]:
-                        st.write("#### 自然/非自然水体数量")
-                        st.dataframe(results['by_type']['counts'], use_container_width=True)
-                        
-                        # 添加下载按钮
-                        type_counts_csv = results['by_type']['counts'].to_csv(index=True).encode('utf-8')
-                        st.download_button(
-                            label="下载自然/非自然水体数量统计",
-                            data=type_counts_csv,
-                            file_name="water_body_type_counts.csv",
-                            mime="text/csv"
-                        )
-                        
-                        st.write("#### 自然/非自然水体面积随年份变化")
-                        st.dataframe(results['by_type']['areas'], use_container_width=True)
-                        
-                        # 添加下载按钮
-                        type_areas_csv = results['by_type']['areas'].to_csv(index=True).encode('utf-8')
-                        st.download_button(
-                            label="下载自然/非自然水体面积统计",
-                            data=type_areas_csv,
-                            file_name="water_body_type_areas.csv",
-                            mime="text/csv"
-                        )
-                    
-                    # 年份统计选项卡
-                    with tabs[2]:
-                        st.write("#### 各年份水体数量和面积")
-                        st.dataframe(results['by_year'], use_container_width=True)
-                        
-                        # 添加下载按钮
-                        by_year_csv = results['by_year'].to_csv(index=True).encode('utf-8')
-                        st.download_button(
-                            label="下载各年份水体统计数据",
-                            data=by_year_csv,
-                            file_name="yearly_water_body_statistics.csv",
-                            mime="text/csv"
-                        )
-                        
-                        st.write("#### 各年份自然/非自然水体统计")
-                        # 格式化列名以提高可读性
-                        yearly_type_stats = results['yearly_type_stats'].copy()
-                        column_mapping = {
-                            'nature_数量': '自然水体数量',
-                            'nature_面积': '自然水体面积',
-                            'non-nature_数量': '非自然水体数量',
-                            'non-nature_面积': '非自然水体面积'
-                        }
-                        yearly_type_stats.rename(columns=column_mapping, inplace=True)
-                        st.dataframe(yearly_type_stats, use_container_width=True)
-                        
-                        # 添加下载按钮
-                        yearly_type_csv = yearly_type_stats.to_csv(index=True).encode('utf-8')
-                        st.download_button(
-                            label="下载各年份自然/非自然水体统计",
-                            data=yearly_type_csv,
-                            file_name="yearly_type_water_body_statistics.csv",
-                            mime="text/csv"
-                        )
-                    
-                    # 图表展示选项卡
-                    with tabs[3]:
-                        st.write("#### 各国水体总面积（前10名）")
-                        st.image(os.path.join(temp_dir, "各国水体总面积.png"))
-                        
-                        st.write("#### 自然/非自然水体数量对比")
-                        st.image(os.path.join(temp_dir, "自然非自然水体数量对比.png"))
-                        
-                        st.write("#### 自然/非自然水体面积随年份变化")
-                        st.image(os.path.join(temp_dir, "自然非自然水体面积年份变化.png"))
-                        
-                        st.write("#### 各年份水体数量变化")
-                        st.image(os.path.join(temp_dir, "各年份水体数量变化.png"))
-                        
-                        st.write("#### 各年份水体总面积变化")
-                        st.image(os.path.join(temp_dir, "各年份水体总面积变化.png"))
-                    
-                    # 水体分析图表选项卡
-                    with tabs[4]:
-                        st.write("#### 水体分析综合图表")
-                        st.write("这个图表展示了水体数据的综合分析，包括面积变化趋势、数量变化、大小分布和气候因素。")
-                        
-                        # 准备数据
-                        chart_data = prepare_data_from_analysis_results(results)
-                        
-                        # 生成图表
-                        water_body_chart_path = os.path.join(temp_dir, "water_body_analysis_chart.png")
-                        generate_water_body_analysis_chart(chart_data, water_body_chart_path)
-                        
-                        # 显示图表
-                        st.image(water_body_chart_path)
-                        
-                        # 添加图表说明
-                        with st.expander("图表说明"):
-                            st.markdown("""
-                            #### 图表解释
-                            
-                            **子图 (a)**: 展示了咸海面积随时间的变化趋势，包括斜率信息。
-                            
-                            **子图 (b)**: 展示了除咸海外的水体面积和数量随时间的变化趋势，左侧Y轴表示面积，右侧Y轴表示数量。
-                            
-                            **子图 (c)**: 展示了不同大小水体的面积和数量变化率，浅蓝色柱状图表示数量变化率，深蓝色柱状图表示面积变化率。
-                            
-                            **子图 (d)**: 展示了温度和降水随时间的变化趋势，橙色线表示温度，蓝色柱状图表示降水。
-                            """)
-                    
-                    # 下载结果选项卡
-                    with tabs[5]:
-                        st.write("#### 下载分析结果")
-                        
-                        # 提供Excel下载
-                        with open(excel_path, "rb") as file:
-                            excel_bytes = file.read()
-                            
-                        st.download_button(
-                            label="下载Excel统计结果",
-                            data=excel_bytes,
-                            file_name="water_body_statistics.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                        
-                        # 提供图表打包下载
-                        # 创建一个ZIP文件
-                        zip_path = os.path.join(temp_dir, "water_body_charts.zip")
-                        with zipfile.ZipFile(zip_path, 'w') as zipf:
-                            for chart_file in os.listdir(temp_dir):
-                                if chart_file.endswith('.png'):
-                                    zipf.write(os.path.join(temp_dir, chart_file), chart_file)
-                        
-                        # 提供ZIP下载
-                        with open(zip_path, "rb") as file:
-                            zip_bytes = file.read()
-                            
-                        st.download_button(
-                            label="下载所有图表 (ZIP)",
-                            data=zip_bytes,
-                            file_name="water_body_charts.zip",
-                            mime="application/zip"
-                        )
-                        
-                except Exception as e:
-                    st.error(f"分析过程中出错: {str(e)}")
-                    # 重置进度条
-                    progress_bar.progress(0)
-                    status_text.text("分析失败")
+                    st.session_state.analysis_triggered_for_current_file = True
+                st.success("分析完成!")
+                # st.experimental_rerun() # Usually not needed, state change triggers rerun
+
         except Exception as e:
-            st.error(f"文件加载失败: {str(e)}")
+            st.error(f"文件加载或分析失败: {str(e)}")
+            st.session_state.water_body_results = None
+            st.session_state.analysis_triggered_for_current_file = False
+
+    # Display results IF analysis has been triggered for the current file AND results exist
+    if st.session_state.analysis_triggered_for_current_file and st.session_state.water_body_results is not None:
+        results = st.session_state.water_body_results
+        temp_dir = st.session_state.water_body_temp_dir
+        
+        st.subheader("分析结果")
+        tabs = st.tabs(["国家统计", "类型统计", "年份统计", "图表展示", "水体分析图表", "下载结果", "单国水体统计"])
+        
+        # 国家统计选项卡 (Tab 0)
+        with tabs[0]:
+            st.write("#### 各国水体统计")
+            st.dataframe(results['total']['country'], use_container_width=True)
+            country_csv = results['total']['country'].to_csv(index=True).encode('utf-8')
+            st.download_button(
+                label="下载各国水体统计数据",
+                data=country_csv,
+                file_name="country_water_body_statistics.csv",
+                mime="text/csv",
+                key="download_total_country_stats_csv"
+            )
+            
+            st.write("#### 单个国家水体统计分析")
+            if df_water is not None: # Ensure df_water is available
+                country_list_tab0 = get_country_list(df_water)
+                if country_list_tab0:
+                    # If a country was previously selected for this tab, try to keep it, else default
+                    default_country_index_tab0 = 0
+                    if st.session_state.selected_country_tab0 and st.session_state.selected_country_tab0 in country_list_tab0:
+                        default_country_index_tab0 = country_list_tab0.index(st.session_state.selected_country_tab0)
+                    
+                    selected_country_val_tab0 = st.selectbox("选择国家", country_list_tab0, index=default_country_index_tab0, key="country_selector_tab0")
+
+                    # If selection changes, update session state and reset analysis completion for this new selection
+                    if selected_country_val_tab0 != st.session_state.selected_country_tab0:
+                        st.session_state.selected_country_tab0 = selected_country_val_tab0
+                        st.session_state.country_analysis_completed_tab0 = False # Reset for new selection
+
+                    year_cols_tab0 = [col for col in df_water.columns if str(col).isdigit()]
+                    
+                    if st.session_state.selected_country_tab0 and year_cols_tab0:
+                        if st.button(f"分析 {st.session_state.selected_country_tab0} 水体数据", key="analyze_country_btn_tab0"):
+                            st.session_state.selected_country_tab0_processed = st.session_state.selected_country_tab0
+                            with st.spinner(f"正在分析 {st.session_state.selected_country_tab0} 的水体数据..."):
+                                country_stats, country_img = generate_country_water_body_stats(df_water, st.session_state.selected_country_tab0, year_cols_tab0)
+                                st.session_state.country_stats_tab0 = country_stats
+                                st.session_state.country_img_tab0 = country_img
+                                st.session_state.country_analysis_completed_tab0 = True
+                            st.rerun() # 使用st.rerun()替代st.experimental_rerun()
+
+                        # Display results if analysis for the currently selected country is completed
+                        if st.session_state.country_analysis_completed_tab0 and \
+                           st.session_state.selected_country_tab0_processed == st.session_state.selected_country_tab0:
+                            country_stats_to_display = st.session_state.country_stats_tab0
+                            country_img_to_display = st.session_state.country_img_tab0
+                            
+                            if not country_stats_to_display.empty:
+                                st.write(f"##### {st.session_state.selected_country_tab0} 水体数据统计")
+                                st.dataframe(country_stats_to_display, use_container_width=True)
+                                country_specific_csv = country_stats_to_display.to_csv(index=True).encode('utf-8-sig')
+                                st.download_button(
+                                    label=f"下载 {st.session_state.selected_country_tab0} 水体统计数据",
+                                    data=country_specific_csv,
+                                    file_name=f"{st.session_state.selected_country_tab0}_water_body_statistics.csv",
+                                    mime="text/csv",
+                                    key=f"download_{st.session_state.selected_country_tab0}_csv_tab0"
+                                )
+                                if country_img_to_display:
+                                    st.write(f"##### {st.session_state.selected_country_tab0} 水体变化可视化")
+                                    st.image(country_img_to_display)
+                                    country_img_path = os.path.join(temp_dir, f"{st.session_state.selected_country_tab0}_water_analysis_tab0.png")
+                                    with open(country_img_path, "wb") as f: f.write(country_img_to_display.getvalue())
+                                    with open(country_img_path, "rb") as f: img_bytes = f.read()
+                                    st.download_button(
+                                        label=f"下载 {st.session_state.selected_country_tab0} 水体分析图",
+                                        data=img_bytes,
+                                        file_name=f"{st.session_state.selected_country_tab0}_water_analysis.png",
+                                        mime="image/png",
+                                        key=f"download_{st.session_state.selected_country_tab0}_img_tab0"
+                                    )
+                            else:
+                                st.warning(f"未找到 {st.session_state.selected_country_tab0} 的水体数据。")
+                else:
+                    st.warning("数据中未找到国家信息或 'country' 列。")
+            elif uploaded_file is not None: # df_water is None but file was uploaded (e.g. load error after successful upload)
+                 st.warning("数据加载似乎存在问题，无法进行国家级分析。")
+            # No else needed here if no file is uploaded, as the outer 'if uploaded_file' handles it.
+
+        # 类型统计选项卡 (Tab 1)
+        with tabs[1]:
+            st.write("#### 自然/非自然水体数量")
+            st.dataframe(results['by_type']['counts'], use_container_width=True)
+            type_counts_csv = results['by_type']['counts'].to_csv(index=True).encode('utf-8')
+            st.download_button(
+                label="下载自然/非自然水体数量统计",
+                data=type_counts_csv,
+                file_name="water_body_type_counts.csv",
+                mime="text/csv",
+                key="download_type_counts_csv"
+            )
+            st.write("#### 自然/非自然水体面积随年份变化")
+            st.dataframe(results['by_type']['areas'], use_container_width=True)
+            type_areas_csv = results['by_type']['areas'].to_csv(index=True).encode('utf-8')
+            st.download_button(
+                label="下载自然/非自然水体面积统计",
+                data=type_areas_csv,
+                file_name="water_body_type_areas.csv",
+                mime="text/csv",
+                key="download_type_areas_csv"
+            )
+
+        # 年份统计选项卡 (Tab 2)
+        with tabs[2]:
+            st.write("#### 各年份水体数量和面积")
+            st.dataframe(results['by_year'], use_container_width=True)
+            by_year_csv = results['by_year'].to_csv(index=True).encode('utf-8')
+            st.download_button(
+                label="下载各年份水体统计数据",
+                data=by_year_csv,
+                file_name="yearly_water_body_statistics.csv",
+                mime="text/csv",
+                key="download_by_year_csv"
+            )
+            st.write("#### 各年份自然/非自然水体统计")
+            yearly_type_stats = results['yearly_type_stats'].copy()
+            column_mapping = {
+                'nature_数量': '自然水体数量', 'nature_面积': '自然水体面积',
+                'non-nature_数量': '非自然水体数量', 'non-nature_面积': '非自然水体面积'
+            }
+            yearly_type_stats.rename(columns=column_mapping, inplace=True)
+            st.dataframe(yearly_type_stats, use_container_width=True)
+            yearly_type_csv = yearly_type_stats.to_csv(index=True).encode('utf-8')
+            st.download_button(
+                label="下载各年份自然/非自然水体统计",
+                data=yearly_type_csv,
+                file_name="yearly_type_water_body_statistics.csv",
+                mime="text/csv",
+                key="download_yearly_type_csv"
+            )
+
+        # 图表展示选项卡 (Tab 3)
+        with tabs[3]:
+            st.write("#### 各国水体总面积（前10名）")
+            st.image(os.path.join(temp_dir, "各国水体总面积.png"))
+            st.write("#### 自然/非自然水体数量对比")
+            st.image(os.path.join(temp_dir, "自然非自然水体数量对比.png"))
+            st.write("#### 自然/非自然水体面积随年份变化")
+            st.image(os.path.join(temp_dir, "自然非自然水体面积年份变化.png"))
+            st.write("#### 各年份水体数量变化")
+            st.image(os.path.join(temp_dir, "各年份水体数量变化.png"))
+            st.write("#### 各年份水体总面积变化")
+            st.image(os.path.join(temp_dir, "各年份水体总面积变化.png"))
+
+        # 水体分析图表选项卡 (Tab 4)
+        with tabs[4]:
+            st.write("#### 水体分析综合图表")
+            st.write("这个图表展示了水体数据的综合分析，包括面积变化趋势、数量变化、大小分布和气候因素。")
+            chart_data = prepare_data_from_analysis_results(results) # Ensure this function is robust
+            water_body_chart_path = os.path.join(temp_dir, "water_body_analysis_chart.png")
+            generate_water_body_analysis_chart(chart_data, water_body_chart_path)
+            st.image(water_body_chart_path)
+            with st.expander("图表说明"):
+                st.markdown("""
+                #### 图表解释
+                **子图 (a)**: 展示了咸海面积随时间的变化趋势，包括斜率信息。
+                **子图 (b)**: 展示了除咸海外的水体面积和数量随时间的变化趋势，左侧Y轴表示面积，右侧Y轴表示数量。
+                **子图 (c)**: 展示了不同大小水体的面积和数量变化率，浅蓝色柱状图表示数量变化率，深蓝色柱状图表示面积变化率。
+                **子图 (d)**: 展示了温度和降水随时间的变化趋势，橙色线表示温度，蓝色柱状图表示降水。
+                """)
+        
+        # 下载结果选项卡 (Tab 5)
+        with tabs[5]:
+            st.write("#### 下载分析结果")
+            excel_path_to_download = os.path.join(temp_dir, "water_body_statistics.xlsx")
+            if os.path.exists(excel_path_to_download):
+                with open(excel_path_to_download, "rb") as file:
+                    excel_bytes = file.read()
+                st.download_button(
+                    label="下载Excel统计结果",
+                    data=excel_bytes,
+                    file_name="water_body_statistics.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_excel_stats"
+                )
+            
+            zip_path = os.path.join(temp_dir, "water_body_charts.zip")
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                for chart_file in os.listdir(temp_dir):
+                    if chart_file.endswith('.png'):
+                        zipf.write(os.path.join(temp_dir, chart_file), chart_file)
+            if os.path.exists(zip_path):
+                with open(zip_path, "rb") as file:
+                    zip_bytes = file.read()
+                st.download_button(
+                    label="下载所有图表 (ZIP)",
+                    data=zip_bytes,
+                    file_name="water_body_charts.zip",
+                    mime="application/zip",
+                    key="download_all_charts_zip"
+                )
+
+        # 单国水体统计选项卡 (Tab 6) - Similar to Tab 0
+        with tabs[6]:
+            st.write("#### 单个国家水体统计分析")
+            if df_water is not None: # Ensure df_water is available
+                country_list_tab6 = get_country_list(df_water)
+                if country_list_tab6:
+                    default_country_index_tab6 = 0
+                    if st.session_state.selected_country_tab6 and st.session_state.selected_country_tab6 in country_list_tab6:
+                        default_country_index_tab6 = country_list_tab6.index(st.session_state.selected_country_tab6)
+                    
+                    selected_country_val_tab6 = st.selectbox("选择国家", country_list_tab6, index=default_country_index_tab6, key="country_selector_tab6")
+
+                    if selected_country_val_tab6 != st.session_state.selected_country_tab6:
+                        st.session_state.selected_country_tab6 = selected_country_val_tab6
+                        st.session_state.country_analysis_completed_tab6 = False
+
+                    year_cols_tab6 = [col for col in df_water.columns if str(col).isdigit()]
+                    
+                    if st.session_state.selected_country_tab6 and year_cols_tab6:
+                        if st.button(f"分析 {st.session_state.selected_country_tab6} 水体数据", key="analyze_country_btn_tab6"):
+                            st.session_state.selected_country_tab6_processed = st.session_state.selected_country_tab6
+                            with st.spinner(f"正在分析 {st.session_state.selected_country_tab6} 的水体数据..."):
+                                country_stats_t6, country_img_t6 = generate_country_water_body_stats(df_water, st.session_state.selected_country_tab6, year_cols_tab6)
+                                st.session_state.country_stats_tab6 = country_stats_t6
+                                st.session_state.country_img_tab6 = country_img_t6
+                                st.session_state.country_analysis_completed_tab6 = True
+                            st.rerun() # 使用st.rerun()替代st.experimental_rerun()
+
+                        if st.session_state.country_analysis_completed_tab6 and \
+                           st.session_state.selected_country_tab6_processed == st.session_state.selected_country_tab6:
+                            country_stats_to_display_t6 = st.session_state.country_stats_tab6
+                            country_img_to_display_t6 = st.session_state.country_img_tab6
+                            if not country_stats_to_display_t6.empty:
+                                st.write(f"##### {st.session_state.selected_country_tab6} 水体数据统计")
+                                st.dataframe(country_stats_to_display_t6, use_container_width=True)
+                                country_specific_csv_t6 = country_stats_to_display_t6.to_csv(index=True).encode('utf-8-sig')
+                                st.download_button(
+                                    label=f"下载 {st.session_state.selected_country_tab6} 水体统计数据",
+                                    data=country_specific_csv_t6,
+                                    file_name=f"{st.session_state.selected_country_tab6}_water_body_statistics.csv",
+                                    mime="text/csv",
+                                    key=f"download_{st.session_state.selected_country_tab6}_csv_tab6"
+                                )
+                                if country_img_to_display_t6:
+                                    st.write(f"##### {st.session_state.selected_country_tab6} 水体变化可视化")
+                                    st.image(country_img_to_display_t6)
+                                    country_img_path_t6 = os.path.join(temp_dir, f"{st.session_state.selected_country_tab6}_water_analysis_tab6.png")
+                                    with open(country_img_path_t6, "wb") as f: f.write(country_img_to_display_t6.getvalue())
+                                    with open(country_img_path_t6, "rb") as f: img_bytes_t6 = f.read()
+                                    st.download_button(
+                                        label=f"下载 {st.session_state.selected_country_tab6} 水体分析图",
+                                        data=img_bytes_t6,
+                                        file_name=f"{st.session_state.selected_country_tab6}_water_analysis.png",
+                                        mime="image/png",
+                                        key=f"download_{st.session_state.selected_country_tab6}_img_tab6"
+                                    )
+                            else:
+                                st.warning(f"未找到 {st.session_state.selected_country_tab6} 的水体数据。")
+                else:
+                    st.warning("数据中未找到国家信息或 'country' 列。")
+            elif uploaded_file is not None:
+                 st.warning("数据加载似乎存在问题，无法进行国家级分析。")
+
+    elif uploaded_file is None and app_mode == "水体数据分析":
+        st.info("请上传水体数据文件开始分析。")
     else:
         # 提供示例数据选项
         if upload_option == "使用示例数据":
@@ -701,6 +666,8 @@ elif app_mode == "水体数据分析":
             if os.path.exists(sample_data_path):
                 st.info("使用水体数据示例")
                 df = load_data(sample_data_path, "xlsx")
+                # 将所有列名转换为字符串，避免混合类型警告
+                df.columns = df.columns.astype(str)
                 
                 # 显示数据预览
                 st.subheader("数据预览")
@@ -838,209 +805,7 @@ elif app_mode == "水体数据分析":
                             
                             **子图 (d)**: 展示了温度和降水随时间的变化趋势，橙色线表示温度，蓝色柱状图表示降水。
                             """)
-                    
-                    # 下载结果选项卡
-                    with tabs[5]:
-                        st.write("#### 下载分析结果")
                         
-                        # 提供Excel下载
-                        excel_path = os.path.join(temp_dir, "water_body_statistics.xlsx")
-                        with open(excel_path, "rb") as file:
-                            excel_bytes = file.read()
-                            
-                        st.download_button(
-                            label="下载Excel统计结果",
-                            data=excel_bytes,
-                            file_name="water_body_statistics.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                        
-                        # 提供图表打包下载
-                        # 创建一个ZIP文件
-                        zip_path = os.path.join(temp_dir, "water_body_charts.zip")
-                        with zipfile.ZipFile(zip_path, 'w') as zipf:
-                            for chart_file in os.listdir(temp_dir):
-                                if chart_file.endswith('.png'):
-                                    zipf.write(os.path.join(temp_dir, chart_file), chart_file)
-                        
-                        # 提供ZIP下载
-                        with open(zip_path, "rb") as file:
-                            zip_bytes = file.read()
-                            
-                        st.download_button(
-                            label="下载所有图表 (ZIP)",
-                            data=zip_bytes,
-                            file_name="water_body_charts.zip",
-                            mime="application/zip"
-                        )
-                # 分析按钮
-                elif st.button("分析示例水体数据"):
-                    # 创建进度条
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    # 更新进度
-                    status_text.text("正在分析数据...")
-                    progress_bar.progress(20)
-                    
-                    # 分析数据
-                    try:
-                        results = analyze_water_body_data(df)
-                        
-                        # 更新进度
-                        status_text.text("正在生成图表...")
-                        progress_bar.progress(50)
-                        
-                        # 创建临时目录用于存储图表
-                        temp_dir = "temp_output"
-                        os.makedirs(temp_dir, exist_ok=True)
-                        
-                        # 生成图表
-                        generate_charts(results, temp_dir)
-                        
-                        # 更新进度
-                        status_text.text("正在保存结果...")
-                        progress_bar.progress(80)
-                        
-                        # 保存结果到Excel
-                        excel_path = os.path.join(temp_dir, "water_body_statistics.xlsx")
-                        save_results_to_excel(results, excel_path)
-                        
-                        # 保存结果到会话状态
-                        st.session_state.water_body_results = results
-                        st.session_state.water_body_temp_dir = temp_dir
-                        
-                        # 完成进度
-                        progress_bar.progress(100)
-                        status_text.text("分析完成!")
-                        
-                        # 显示结果
-                        st.subheader("分析结果")
-                        
-                        # 创建选项卡
-                        tabs = st.tabs(["国家统计", "类型统计", "年份统计", "图表展示", "水体分析图表", "下载结果"])
-                        
-                        # 国家统计选项卡
-                        with tabs[0]:
-                            st.write("#### 各国水体统计")
-                            st.dataframe(results['total']['country'], use_container_width=True)
-                            
-                            # 添加下载按钮
-                            country_csv = results['total']['country'].to_csv(index=True).encode('utf-8')
-                            st.download_button(
-                                label="下载各国水体统计数据",
-                                data=country_csv,
-                                file_name="country_water_body_statistics.csv",
-                                mime="text/csv"
-                            )
-                        
-                        # 类型统计选项卡
-                        with tabs[1]:
-                            st.write("#### 自然/非自然水体数量")
-                            st.dataframe(results['by_type']['counts'], use_container_width=True)
-                            
-                            # 添加下载按钮
-                            type_counts_csv = results['by_type']['counts'].to_csv(index=True).encode('utf-8')
-                            st.download_button(
-                                label="下载自然/非自然水体数量统计",
-                                data=type_counts_csv,
-                                file_name="water_body_type_counts.csv",
-                                mime="text/csv"
-                            )
-                            
-                            st.write("#### 自然/非自然水体面积随年份变化")
-                            st.dataframe(results['by_type']['areas'], use_container_width=True)
-                            
-                            # 添加下载按钮
-                            type_areas_csv = results['by_type']['areas'].to_csv(index=True).encode('utf-8')
-                            st.download_button(
-                                label="下载自然/非自然水体面积统计",
-                                data=type_areas_csv,
-                                file_name="water_body_type_areas.csv",
-                                mime="text/csv"
-                            )
-                        
-                        # 年份统计选项卡
-                        with tabs[2]:
-                            st.write("#### 各年份水体数量和面积")
-                            st.dataframe(results['by_year'], use_container_width=True)
-                            
-                            # 添加下载按钮
-                            by_year_csv = results['by_year'].to_csv(index=True).encode('utf-8')
-                            st.download_button(
-                                label="下载各年份水体统计数据",
-                                data=by_year_csv,
-                                file_name="yearly_water_body_statistics.csv",
-                                mime="text/csv"
-                            )
-                            
-                            st.write("#### 各年份自然/非自然水体统计")
-                            # 格式化列名以提高可读性
-                            yearly_type_stats = results['yearly_type_stats'].copy()
-                            column_mapping = {
-                                'nature_数量': '自然水体数量',
-                                'nature_面积': '自然水体面积',
-                                'non-nature_数量': '非自然水体数量',
-                                'non-nature_面积': '非自然水体面积'
-                            }
-                            yearly_type_stats.rename(columns=column_mapping, inplace=True)
-                            st.dataframe(yearly_type_stats, use_container_width=True)
-                            
-                            # 添加下载按钮
-                            yearly_type_csv = yearly_type_stats.to_csv(index=True).encode('utf-8')
-                            st.download_button(
-                                label="下载各年份自然/非自然水体统计",
-                                data=yearly_type_csv,
-                                file_name="yearly_type_water_body_statistics.csv",
-                                mime="text/csv"
-                            )
-                        
-                        # 图表展示选项卡
-                        with tabs[3]:
-                            st.write("#### 各国水体总面积（前10名）")
-                            st.image(os.path.join(temp_dir, "各国水体总面积.png"))
-                            
-                            st.write("#### 自然/非自然水体数量对比")
-                            st.image(os.path.join(temp_dir, "自然非自然水体数量对比.png"))
-                            
-                            st.write("#### 自然/非自然水体面积随年份变化")
-                            st.image(os.path.join(temp_dir, "自然非自然水体面积年份变化.png"))
-                            
-                            st.write("#### 各年份水体数量变化")
-                            st.image(os.path.join(temp_dir, "各年份水体数量变化.png"))
-                            
-                            st.write("#### 各年份水体总面积变化")
-                            st.image(os.path.join(temp_dir, "各年份水体总面积变化.png"))
-                    
-                        # 水体分析图表选项卡
-                        with tabs[4]:
-                            st.write("#### 水体分析综合图表")
-                            st.write("这个图表展示了水体数据的综合分析，包括面积变化趋势、数量变化、大小分布和气候因素。")
-                        
-                            # 准备数据
-                            chart_data = prepare_data_from_analysis_results(results)
-                            
-                            # 生成图表
-                            water_body_chart_path = os.path.join(temp_dir, "water_body_analysis_chart.png")
-                            generate_water_body_analysis_chart(chart_data, water_body_chart_path)
-                            
-                            # 显示图表
-                            st.image(water_body_chart_path)
-                            
-                            # 添加图表说明
-                            with st.expander("图表说明"):
-                                st.markdown("""
-                                #### 图表解释
-                                
-                                **子图 (a)**: 展示了咸海面积随时间的变化趋势，包括斜率信息。
-                                
-                                **子图 (b)**: 展示了除咸海外的水体面积和数量随时间的变化趋势，左侧Y轴表示面积，右侧Y轴表示数量。
-                                
-                                **子图 (c)**: 展示了不同大小水体的面积和数量变化率，浅蓝色柱状图表示数量变化率，深蓝色柱状图表示面积变化率。
-                                
-                                **子图 (d)**: 展示了温度和降水随时间的变化趋势，橙色线表示温度，蓝色柱状图表示降水。
-                                """)
-                    
                         # 下载结果选项卡
                         with tabs[5]:
                             st.write("#### 下载分析结果")
@@ -1074,22 +839,19 @@ elif app_mode == "水体数据分析":
                                 file_name="water_body_charts.zip",
                                 mime="application/zip"
                             )
-                    except Exception as e:
-                        st.error(f"分析过程中出错: {str(e)}")
-                        # 重置进度条
-                        progress_bar.progress(0)
-                        status_text.text("分析失败")
+                else:
+                    st.error("示例水体数据文件不存在，请先运行 create_water_body_sample.py 创建示例数据")
+                    if st.button("创建示例水体数据"):
+                        try:
+                            from create_water_body_sample import create_water_body_sample
+                            output_path = create_water_body_sample()
+                            st.success(f"示例水体数据已创建: {output_path}")
+                            st.info("请刷新页面以加载示例数据")
+                        except Exception as e:
+                            st.error(f"创建示例数据失败: {str(e)}")
             else:
-                st.error("示例水体数据文件不存在，请先运行 create_water_body_sample.py 创建示例数据")
-                if st.button("创建示例水体数据"):
-                    try:
-                        from create_water_body_sample import create_water_body_sample
-                        output_path = create_water_body_sample()
-                        st.success(f"示例水体数据已创建: {output_path}")
-                        st.info("请刷新页面以加载示例数据")
-                    except Exception as e:
-                        st.error(f"创建示例数据失败: {str(e)}")
+                st.info("请上传水体数据文件或选择使用示例数据以开始分析")
         else:
-            st.info("请上传水体数据文件或选择使用示例数据以开始分析")
+            st.info("请上传数据文件或选择示例数据以开始")
 else:
     st.info("请上传数据文件或选择示例数据以开始")
